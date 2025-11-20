@@ -18,6 +18,15 @@ impl FileSystem {
         Ok(content)
     }
     
+    pub fn read_file_lines<P: AsRef<Path>>(&self, path: P, startline: u32, endline: u32) -> Result<Vec<String>> {
+        let path = path.as_ref();
+        let content = fs::read_to_string(path)?;
+        let lines = content.lines().collect::<Vec<_>>();
+        let start = startline as usize;
+        let end = endline as usize;
+        Ok(lines[start..end].iter().map(|s| s.to_string()).collect())
+    }
+
     pub fn list_directory<P: AsRef<Path>>(&self, path: P) -> Result<String> {
         let path = path.as_ref();
         let entries = fs::read_dir(path)?;

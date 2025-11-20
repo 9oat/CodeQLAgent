@@ -4,6 +4,9 @@ use std::process::Command;
 use crate::error::{AppError, Result};
 use std::path::PathBuf;
 use std::fs;
+use serde::{Serialize, Deserialize};
+use crate::utils::utils::parse_csv;
+use crate::tools::filesystem::FileSystem;
 
 pub struct CodeQLRunner {
     db_path: String
@@ -129,13 +132,13 @@ async fn test_run_cpp_variable_query() {
     a.getLocation().getStartLine() = 362 and
     a.getTarget() = v and
     v.getName() = "p"
-    select v,
-    v.getType(),
-    v.getLocation().getStartLine(),
-    v.getLocation().getStartColumn()
+    select v as variable,
+    v.getType() as type,
+    v.getLocation().getStartLine() as line,
+    v.getLocation().getStartColumn() as column
     "#;
         
-    let csv_result = runner.run_query(query).await
+    let csv_result = runner.run_query(&query).await
         .expect("쿼리 실행 실패");
 
     println!("CSV:\n{}", csv_result);
@@ -144,14 +147,32 @@ async fn test_run_cpp_variable_query() {
     assert!(csv_result.contains("p"), "변수 'p'가 결과에 포함되어야 함");
 }
 
+// 소스코드와 라인 정보를 반환하는 녀석
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SourceInfoParse {
+    pub filename: String,
+    pub startline: u32,
+    pub endline: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SourceInfoResult {
+    pub filename: String,
+    pub line: u32,
+    pub code: String
+}
+
 pub struct CodeQLAnalyzer {
     runner: CodeQLRunner,
+    fs: FileSystem,
 }
 
 impl CodeQLAnalyzer{
     pub fn new(runner: CodeQLRunner) -> Self {
         CodeQLAnalyzer {
             runner,
+            fs: FileSystem::new(),
         }
     }
 
@@ -165,11 +186,27 @@ impl CodeQLAnalyzer{
         a.getLocation().getStartLine() = {} and
         a.getTarget() = v and
         v.getName() = "{}"
-        select v,
-        v.getType(),
-        v.getLocation().getStartLine(),
-        v.getLocation().getStartColumn()
+        select 
+        v.getFile().getRelativePath() as filename,
+        v.getLocation().getStartLine() as startline,
+        v.getLocation().getEndLine() as endline
         "#, filename, line, varname);
-        self.runner.run_query(query).await
+        let csv_result = self.runner.run_query(&query).await?;
+        let parsed: Vec<SourceInfoParse> = parse_csv(&csv_result)?;
+        
+        if parsed.is_empty() {
+            return Err(AppError::CodeQLError("No results".to_string()));
+        }else if parsed.len() > 1 {
+            return Err(AppError::CodeQLError("Multiple results".to_string()));
+        }
+
+        let source_info = &parsed[0];
+        let source_code = self.fs.read_file_lines(&source_info.filename, source_info.startline, source_info.endline)?;
+        let result = SourceInfoResult {
+            filename: source_info.filename.clone(),
+            line: source_info.startline,
+            code: source_code.join("\n"),
+        };
+        Ok(serde_json::to_string_pretty(&result)?)
     }
 }

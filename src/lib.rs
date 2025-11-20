@@ -6,3 +6,4 @@
 pub mod agent;  // 에이전트 로직
 pub mod tools;  // CodeQL 같은 도구들
 pub mod error;  // 에러 타입
+pub mod utils;  // 유틸리티 함수

@@ -12,4 +12,7 @@ pub enum AppError {
 
     #[error("CodeQL error: {0}")]
     CodeQLError(String),
+
+    #[error("CSV parsing error: {0}")]
+    CsvError(#[from] csv::Error),
 }
