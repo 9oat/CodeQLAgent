@@ -1,0 +1,35 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# Temporary files
+/tmp/
+*.tmp
+*.temp
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Debug symbols
+*.pdb
+
+# OS specific
+Thumbs.db
+.Spotlight-V100
+.Trashes
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+
+# Backup files
+*.bak
+*.orig
