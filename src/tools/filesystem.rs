@@ -22,9 +22,9 @@ impl FileSystem {
         let path = path.as_ref();
         let content = fs::read_to_string(path)?;
         let lines = content.lines().collect::<Vec<_>>();
-        let start = startline as usize;
-        let end = endline as usize;
-        Ok(lines[start..end].iter().map(|s| s.to_string()).collect())
+        let start = (startline - 1) as usize;
+        let end = (endline - 1) as usize;
+        Ok(lines[start..=end].iter().map(|s| s.to_string()).collect())
     }
 
     pub fn list_directory<P: AsRef<Path>>(&self, path: P) -> Result<String> {

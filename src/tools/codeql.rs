@@ -9,16 +9,18 @@ use crate::utils::utils::parse_csv;
 use crate::tools::filesystem::FileSystem;
 
 pub struct CodeQLRunner {
-    db_path: String
+    db_path: String,
+    src_path: String,
 }
 
 impl CodeQLRunner {
-    pub fn new(db_path: impl Into<String>) -> Result<Self> {
+    pub fn new(src_path: impl Into<String>, db_path: impl Into<String>) -> Result<Self> {
         Command::new("codeql")
             .arg("--version")
             .output()?;
         
         Ok(CodeQLRunner {
+            src_path: src_path.into(),
             db_path: db_path.into(),
         })
     }
@@ -118,34 +120,34 @@ libraryPathDependencies:
     }
 }
 
-#[tokio::test]
-async fn test_run_cpp_variable_query() {
-    let runner = CodeQLRunner::new("/home/goat/aaa/curl/curl.ql")
-        .expect("CodeQL CLI가 설치되어 있어야 합니다");
+// #[tokio::test]
+// async fn test_run_cpp_variable_query() {
+//     let runner = CodeQLRunner::new("/home/goat/aaa/curl", "/home/goat/aaa/curl/curl.ql")
+//         .expect("CodeQL CLI가 설치되어 있어야 합니다");
     
-    let query = r#"
-    import cpp
+//     let query = r#"
+//     import cpp
 
-    from VariableAccess a, Variable v
-    where
-    a.getFile().getRelativePath() = "src/var.c" and
-    a.getLocation().getStartLine() = 362 and
-    a.getTarget() = v and
-    v.getName() = "p"
-    select v as variable,
-    v.getType() as type,
-    v.getLocation().getStartLine() as line,
-    v.getLocation().getStartColumn() as column
-    "#;
+//     from VariableAccess a, Variable v
+//     where
+//     a.getFile().getRelativePath() = "src/var.c" and
+//     a.getLocation().getStartLine() = 362 and
+//     a.getTarget() = v and
+//     v.getName() = "p"
+//     select v as variable,
+//     v.getType() as type,
+//     v.getLocation().getStartLine() as line,
+//     v.getLocation().getStartColumn() as column
+//     "#;
         
-    let csv_result = runner.run_query(&query).await
-        .expect("쿼리 실행 실패");
+//     let csv_result = runner.run_query(&query).await
+//         .expect("쿼리 실행 실패");
 
-    println!("CSV:\n{}", csv_result);
+//     println!("CSV:\n{}", csv_result);
     
-    assert!(!csv_result.is_empty(), "CSV 결과가 비어있으면 안됨");
-    assert!(csv_result.contains("p"), "변수 'p'가 결과에 포함되어야 함");
-}
+//     assert!(!csv_result.is_empty(), "CSV 결과가 비어있으면 안됨");
+//     assert!(csv_result.contains("p"), "변수 'p'가 결과에 포함되어야 함");
+// }
 
 // 소스코드와 라인 정보를 반환하는 녀석
 
@@ -201,12 +203,27 @@ impl CodeQLAnalyzer{
         }
 
         let source_info = &parsed[0];
-        let source_code = self.fs.read_file_lines(&source_info.filename, source_info.startline, source_info.endline)?;
+        let filepath = self.runner.src_path.clone() + "/" + &source_info.filename;
+        let source_code = self.fs.read_file_lines(&filepath, source_info.startline, source_info.endline)?;
         let result = SourceInfoResult {
-            filename: source_info.filename.clone(),
+            filename: filepath,
             line: source_info.startline,
             code: source_code.join("\n"),
         };
         Ok(serde_json::to_string_pretty(&result)?)
     }
+
+    pub async fn find_function_code(&self, filename){
+        
+    }
+}
+
+#[tokio::test]
+async fn test_find_var_definitions() {
+    let runner = CodeQLRunner::new("/home/goat/aaa/curl", "/home/goat/aaa/curl/curl.ql")
+        .expect("CodeQL CLI가 설치되어 있어야 합니다");
+    let analyzer = CodeQLAnalyzer::new(runner);
+    let result = analyzer.find_var_definitions("src/var.c", 362, "p").await;
+    println!("Result: {:#?}", result);
+    assert!(result.is_ok());
 }
