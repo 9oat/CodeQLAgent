@@ -170,6 +170,34 @@ pub struct CodeQLAnalyzer {
     fs: FileSystem,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct FunctionInfoParse {
+    qualified_name: String,
+    filename: String,
+    startline: u32,
+    endline: u32,
+    is_virtual: String,  // "true" 또는 "false" 문자열로 옴
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OverrideInfoParse {
+    qualified_name: String,
+    filename: String,
+    startline: u32,
+    endline: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FunctionInfoResult {
+    qualified_name: String,
+    filename: String,
+    line: u32,
+    code: String,
+    is_virtual: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    overrides: Option<Vec<FunctionInfoResult>>,
+}
+
 impl CodeQLAnalyzer{
     pub fn new(runner: CodeQLRunner) -> Self {
         CodeQLAnalyzer {
@@ -203,27 +231,130 @@ impl CodeQLAnalyzer{
         }
 
         let source_info = &parsed[0];
-        let filepath = self.runner.src_path.clone() + "/" + &source_info.filename;
+        let filepath = PathBuf::from(&self.runner.src_path).join(&source_info.filename);
         let source_code = self.fs.read_file_lines(&filepath, source_info.startline, source_info.endline)?;
         let result = SourceInfoResult {
-            filename: filepath,
+            filename: filepath.display().to_string(),
             line: source_info.startline,
             code: source_code.join("\n"),
         };
         Ok(serde_json::to_string_pretty(&result)?)
     }
 
-    pub async fn find_function_code(&self, filename){
+    pub async fn find_function_implementation(&self, filename: &str, line: u32, funcname: &str) -> Result<String> {
+        let query = format!(r#"
+        import cpp
+
+        from FunctionCall fc, Function target, string is_virtual
+        where
+        fc.getFile().getRelativePath() = "{}" and
+        fc.getLocation().getStartLine() = {} and
+        target = fc.getTarget() and
+        (
+            target.getName() = "{}"
+            or target.getQualifiedName().matches("%{}%")
+        ) and
+        (
+            (target instanceof VirtualFunction and is_virtual = "true")
+            or
+            (not target instanceof VirtualFunction and is_virtual = "false")
+        )
+        select 
+        target.getQualifiedName() as qualified_name,
+        target.getFile().getRelativePath() as filename,
+        target.getLocation().getStartLine() as startline,
+        target.getLocation().getEndLine() as endline,
+        is_virtual
+        "#, filename, line, funcname, funcname);
         
+        let csv_result = self.runner.run_query(&query).await?;
+        let parsed: Vec<FunctionInfoParse> = parse_csv(&csv_result)?;
+        
+        if parsed.is_empty() {
+            return Err(AppError::CodeQLError("No function call found at specified location".to_string()));
+        }
+
+        let mut results = Vec::new();
+        
+        for func_info in parsed {
+            let filepath = PathBuf::from(&self.runner.src_path).join(&func_info.filename);
+            let source_code = self.fs.read_file_lines(&filepath, func_info.startline, func_info.endline)?;
+            
+            let is_virtual = func_info.is_virtual == "true";
+            
+            let mut result = FunctionInfoResult {
+                qualified_name: func_info.qualified_name.clone(),
+                filename: filepath.display().to_string(),
+                line: func_info.startline,
+                code: source_code.join("\n"),
+                is_virtual,
+                overrides: None,
+            };
+
+            // 가상 함수면 오버라이드 찾기
+            if is_virtual {
+                result.overrides = Some(self.find_function_overrides(&func_info.qualified_name).await?);
+            }
+
+            results.push(result);
+        }
+
+        Ok(serde_json::to_string_pretty(&results)?)
+    }
+
+    async fn find_function_overrides(&self, qualified_name: &str) -> Result<Vec<FunctionInfoResult>> {
+        let query = format!(r#"
+        import cpp
+
+        from VirtualFunction base, Function override
+        where
+        base.getQualifiedName() = "{}" and
+        override = base.getAnOverridingFunction()
+        select 
+        override.getQualifiedName() as qualified_name,
+        override.getFile().getRelativePath() as filename,
+        override.getLocation().getStartLine() as startline,
+        override.getLocation().getEndLine() as endline
+        "#, qualified_name);
+
+        let csv_result = self.runner.run_query(&query).await?;
+        let parsed: Vec<OverrideInfoParse> = parse_csv(&csv_result)?;
+
+        let mut overrides = Vec::new();
+        for override_info in parsed {
+            let filepath = PathBuf::from(&self.runner.src_path).join(&override_info.filename);
+            let source_code = self.fs.read_file_lines(&filepath, override_info.startline, override_info.endline)?;
+            
+            overrides.push(FunctionInfoResult {
+                qualified_name: override_info.qualified_name,
+                filename: filepath.display().to_string(),
+                line: override_info.startline,
+                code: source_code.join("\n"),
+                is_virtual: true,
+                overrides: None,
+            });
+        }
+
+        Ok(overrides)
     }
 }
 
+// #[tokio::test]
+// async fn test_find_var_definitions() {
+//     let runner = CodeQLRunner::new("/home/goat/aaa/curl", "/home/goat/aaa/curl/curl.ql")
+//         .expect("CodeQL CLI가 설치되어 있어야 합니다");
+//     let analyzer = CodeQLAnalyzer::new(runner);
+//     let result = analyzer.find_var_definitions("src/var.c", 362, "p").await;
+//     println!("Result: {:#?}", result);
+//     assert!(result.is_ok());
+// }
+
 #[tokio::test]
-async fn test_find_var_definitions() {
+async fn test_find_function_implementation(){
     let runner = CodeQLRunner::new("/home/goat/aaa/curl", "/home/goat/aaa/curl/curl.ql")
         .expect("CodeQL CLI가 설치되어 있어야 합니다");
     let analyzer = CodeQLAnalyzer::new(runner);
-    let result = analyzer.find_var_definitions("src/var.c", 362, "p").await;
+    let result = analyzer.find_function_implementation("src/var.c", 465, "file2memory_range").await;
     println!("Result: {:#?}", result);
     assert!(result.is_ok());
 }
